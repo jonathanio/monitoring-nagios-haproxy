@@ -31,7 +31,7 @@ use Data::Dumper;
 # Configure Program details
 our ($_program, $_version, $_author);
 $_program = 'check_haproxy';
-$_version = '1.0.0rc2';
+$_version = '1.0.0';
 $_author  = 'Jonathan Wright <github@jon.than.io>';
 
 use constant {
@@ -240,6 +240,9 @@ sub do_unknown {
 sub check_pass {
   my ($state, $threshold, $value, $max) = (shift, shift, shift, shift);
 
+  # Bypass any checks
+  return 0 if $state eq 'x';
+
   # Sanity checking
   do_unknown(_('Negative check value: %d', $value)) if $value < 0;
   do_unknown(_('Negative check threshold: %d', $threshold)) if $threshold < 0;
@@ -378,7 +381,8 @@ sub build_checks {
   $limit_crit = LIMIT_CRIT_LIMITS;
 
   # See if there is an override for the defaults, then use those
-  if ($opt{'defaults'} =~ /([ud]?),(?:([0-9]*)(?:,([0-9]*)(?:,([0-9]*)%?(?:,([0-9]*)%?)?)?)?)?/) {
+  if (defined $opt{'defaults'}
+      and $opt{'defaults'} =~ /([ud]?),(?:([0-9]*)(?:,([0-9]*)(?:,([0-9]*)%?(?:,([0-9]*)%?)?)?)?)?/) {
     $state      =  $1       if $1;
     $be_warn    =  $2       if $2;
     $be_crit    =  $3       if $3;
@@ -423,12 +427,12 @@ sub build_checks {
 
     _debug('build_checks', _('processing override %s', $override));
 
-    next unless ($override =~ /([^:]+):([ud]?),(?:([0-9]*)(?:,([0-9]*)(?:,([0-9]*)%?(?:,([0-9]*)%?)?)?)?)?/);
+    next unless ($override =~ /([^:]+):([udx]?)(?:,([0-9]*)(?:,([0-9]*)(?:,([0-9]*)%?(?:,([0-9]*)%?)?)?)?)?/);
 
     next unless exists $data{$1};
 
     if ($data{$1}{'type'} eq TYPE_BACKEND) {
-      $checks{$1}{'state'}    =  $2      if $2 and ($2 eq 'u' or $2 eq 'd');
+      $checks{$1}{'state'}    =  $2      if $2 and ($2 eq 'u' or $2 eq 'd' or $2 eq 'x');
       $checks{$1}{'be_warn'}  =  $3      if $3 and $3 >= 0;
       $checks{$1}{'be_crit'}  =  $4      if $4 and $4 >= 0;
     }
@@ -496,6 +500,7 @@ sub check_backends {
   # Run checks for each of the backends
   foreach my $service (sort keys %data) {
     next unless $data{$service}{'type'} eq TYPE_BACKEND;
+    next if $checks{$service}{'state'} eq 'x';
     _debug('check_backends', _('checking BACKEND %s', $service));
 
     my ($msg, $total, $up, $down, $disabled) = ('',0,0,0,0);
@@ -558,6 +563,7 @@ sub check_servers {
   # Run checks for each of servers in each of the backends
   foreach my $service (sort keys %data) {
     next unless $data{$service}{'type'} eq TYPE_BACKEND;
+    next if $checks{$service}{'state'} eq 'x';
     foreach my $server (sort keys %{$data{$service}{'servers'}}) {
       next if $data{$service}{'servers'}{$server}{'backend'};
       _debug('check_servers', _('checking SERVER %s on BACKEND %s', $server, $service));
