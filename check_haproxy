@@ -25,13 +25,14 @@ use Switch;
 
 # Import Modules
 use Getopt::Long qw(:config no_ignore_case);
+use Pod::Usage;
 use IO::Socket::UNIX qw( SOCK_STREAM );
 use Data::Dumper;
 
 # Configure Program details
 our ($_program, $_version, $_author);
 $_program = 'check_haproxy';
-$_version = '1.0.1';
+$_version = '1.0.2';
 $_author  = 'Jonathan Wright <github@jon.than.io>';
 
 use constant {
@@ -111,11 +112,7 @@ use constant {
   LIMIT_CRIT_BACKEND_UP         => 2,
   LIMIT_WARN_BACKEND_DOWN       => 2,
   LIMIT_CRIT_BACKEND_DOWN       => 5,
-  LIMIT_WARN_BACKEND_SESSIONS   => 0.75,  # Percentages
-  LIMIT_CRIT_BACKEND_SESSIONS   => 0.90,
-  LIMIT_WARN_BACKEND_QUEUE      => 0.25,
-  LIMIT_CRIT_BACKEND_QUEUE      => 0.50,
-  LIMIT_WARN_LIMITS             => 0.75,
+  LIMIT_WARN_LIMITS             => 0.75,  # Percentages
   LIMIT_CRIT_LIMITS             => 0.90,
 };
 
@@ -140,6 +137,7 @@ our (%opt, %data, %checks);
   'socket'          => '/var/run/haproxy.sock',
   'debug'           => 0,
   'defaults'        => undef,
+  'help'            => 0,
 );
 
 # Somewhere to store messages
@@ -156,7 +154,16 @@ sub main {
     'd'       => \$opt{'debug'},           'debug!'           => \$opt{'debug'},
     'O=s{1,}' => \@overrides,              'overrides=s{1,}'  => \@overrides,
     'D=s'     => \$opt{'defaults'},        'defaults=s'       => \$opt{'defaults'},
-  );
+    '-h'      => \$opt{'help'},            '--help'           => \$opt{'help'},
+  ) or pod2usage(
+    -message => sprintf("%s %s by %s", $_program, $_version, $_author),
+    -exitval => EXIT_UNKNOWN,
+    -verbose => 0);
+
+  pod2usage(
+    -message => sprintf("%s %s by %s", $_program, $_version, $_author),
+    -exitval => EXIT_UNKNOWN,
+    -verbose => 1) if $opt{'help'};
 
   my $socket = IO::Socket::UNIX->new(
     Peer    => $opt{'socket'},
@@ -200,6 +207,7 @@ sub main {
   );
 }
 
+# ------------------------------------------------------------------------------
 sub _debug {
   return unless $opt{'debug'};
   printf "%s{} %s\n", shift, shift;
@@ -381,16 +389,15 @@ sub build_checks {
 
   # See if there is an override for the defaults, then use those
   if (defined $opt{'defaults'}
-      and $opt{'defaults'} =~ /([ud]?),(?:([0-9]*)(?:,([0-9]*)(?:,([0-9]*)%?(?:,([0-9]*)%?)?)?)?)?/) {
+      and $opt{'defaults'} =~ /([ud]?),(?:((?:0?\.)?[0-9]*)(?:,((?:0?\.)?[0-9]*)(?:,((?:0?\.)?[0-9]*)%?(?:,((?:0?\.)?[0-9]*)%?)?)?)?)?/) {
     $state      =  $1       if $1;
     $be_warn    =  $2       if $2;
     $be_crit    =  $3       if $3;
     $limit_warn = ($4/100)  if $4;
     $limit_crit = ($5/100)  if $5;
     _debug('build_checks',
-           _('setting defaults to %s,%d,%d,%.2f,%.2f',
+           _('setting defaults to %s,%.2f,%.2f,%.2f,%.2f',
              $state, $be_warn, $be_crit, $limit_warn, $limit_crit));
-
   }
 
   # Build the defaults for all checks
@@ -623,3 +630,139 @@ sub check_servers {
 
 # Run the program
 &main();
+
+__END__
+
+=head1 NAME
+
+check_haproxy: This is a Nagios plugin to check the status of HAProxy over a
+socket connection (by default, /var/run/haproxy.sock).
+
+=head1 SYNOPSIS
+
+check_haproxy [--defaults (defaults)] [--overrides S<(1 2 ... n)>]
+  [--[no]frontends] [--[no]backends] [--[no]servers]
+  [--socket (path)] [--help]
+
+=head1 OPTIONS
+
+=item B<-f>, B<--[no]frontends>
+
+Enable/disable checks for the frontends in HAProxy (that they're marked as OPEN
+and the session limits haven't been reached).
+
+=item B<-b>, B<--[no]backends>
+
+Enable/disable checks for the backends in HAProxy (that they have the required
+quorum of servers, and that the session limits haven't been reached).
+
+=item B<-s>, B<--[no]servers>
+
+Enable/disable checks for the servers in HAProxy (that they haven't reached the
+limits for the sessions or for queues).
+
+=item B<-D>, B<--defaults> I<defaults>
+
+Set/Override the defaults which will be applied to all checks (unless
+specifically set by --overrides). Takes the form:
+
+  C<{u,d,x},{svr_warn},{svr_crit},{sess_warn},{sess_crit}>
+
+Each of these is optional, but the positioning is important. To fully override,
+set (for example):
+
+  C<u,10,5,.25,0.5>
+
+which means:
+
+=over
+
+=item C<u>
+
+Check for servers up (C<u>) or servers down (C<d>), or disable all checks on
+that particular frontend/backend (C<x>).
+
+=item C<10>
+
+WARNING if less than 10 servers are up, or if at least that many servers are
+down.
+
+=item C<5>
+
+CRITICAL if less than 5 servers are available, or if at least that many have
+gone away.
+
+=item C<.25>
+
+WARNING if more any frontend, backend, or individual server has gone over 25% of
+it's maximum allowed sessions (or any queue for any server on the backend is at
+least 25% full).
+
+=item C<0.5>
+
+CRITICAL for the same reasons as previous, but we've reached 50% of these
+levels.
+
+=back
+
+To override only some of these values from the pre-set defaults
+(C<u,5,2,.75..9>), simply leave the others as empty, for example: C<,10,7> will
+leave checks as up, but increase the server WARN/CRIT to 10/7. or to switch to
+use down, use C<d,>, or off with C<x>.
+
+=item B<-O>, B<--overrides> I<override override ... override>
+
+Override the defaults for a particular frontend or backend, in the form
+{name}:{override}, where {override} is the same format as --defaults above. For
+example, to override the frontend called "api" and allow that to increase to
+limits of 15/10 for WARN/CRIT, use C<api:,15,10>. Add as many as you like as
+space-delimited options:
+
+  C<--overrides api:,15,10 assets:d,2,5 webmail:u,3,2>
+
+=item B<-S>, B<--socket> I</path/to/socket>
+
+Path to the socket check_haproxy should connect to (requires read/write
+permissions and must be at least user level; no operator or admin privileges
+needed).
+
+=back
+
+=head1 DESCRIPTION
+
+B<This program> will connect to the HAProxy socket and parse the statistics to
+ensure that it is operating within accepted limits, as per the defaults, or as
+set for each frontend/backend.
+
+=head1 HISTORY
+
+1.0.0rc1 - Testing Release.
+1.0.0rc2 - Fix bug in calling do_unknown().
+1.0.0    - Added support for disabling some checks with an x state.
+1.0.1    - Added prefix to response message.
+1.0.2    - Removed old constants no longer needed.
+         - Added help POD messages.
+
+=head1 AUTHOR
+
+Jonathan Wright <github@jon.than.io>
+
+=head1 COPYRIGHT AND LICENCE
+
+(c) 2014-2015, Jonathan Wright <github@jon.than.io>
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+=cut
