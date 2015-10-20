@@ -31,7 +31,7 @@ use Data::Dumper;
 # Configure Program details
 our ($_program, $_version, $_author);
 $_program = 'check_haproxy';
-$_version = '1.0.0';
+$_version = '1.0.1';
 $_author  = 'Jonathan Wright <github@jon.than.io>';
 
 use constant {
@@ -210,7 +210,7 @@ sub _report {
   croak('No message given') unless $message;
   _debug('report', "with status ${status} and message '${message}'");
 
-  printf "%s: %s (%s %s)\n", (EXIT_STATUS)[$status], $message, $_program, $_version;
+  printf "HAPROXY %s: %s (%s %s)\n", (EXIT_STATUS)[$status], $message, $_program, $_version;
   exit $status;
 }
 
@@ -353,7 +353,6 @@ sub get_data {
     }
   }
 
-  # print Dumper(\%v);
   return %v;
 }
 
