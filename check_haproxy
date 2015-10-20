@@ -31,7 +31,7 @@ use Data::Dumper;
 # Configure Program details
 our ($_program, $_version, $_author);
 $_program = 'check_haproxy';
-$_version = '1.0.0rc1';
+$_version = '1.0.0rc2';
 $_author  = 'Jonathan Wright <github@jon.than.io>';
 
 use constant {
@@ -162,7 +162,7 @@ sub main {
     Peer    => $opt{'socket'},
     Type    => SOCK_STREAM,
     Timeout => 1,
-  ) or unknown ("Cannot connect to socket ".$opt{'socket'}, 1);
+  ) or do_unknown("Cannot connect to socket ".$opt{'socket'}, 1);
 
   %data   = get_data($socket);
   %checks = build_checks(\@overrides);
