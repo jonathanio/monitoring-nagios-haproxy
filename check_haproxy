@@ -1,0 +1,620 @@
+#!/usr/bin/perl
+
+# check_haproxy Nagios Plugin
+# Nagios Plugin to check the state of HAProxy.
+#  (c) 2014-2015 Jonathan Wright <github@jon.than.io>
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
+# Configure the Perl Environment
+use warnings;
+use Carp;
+use Switch;
+
+# Import Modules
+use Getopt::Long qw(:config no_ignore_case);
+use IO::Socket::UNIX qw( SOCK_STREAM );
+use Data::Dumper;
+
+# Configure Program details
+our ($_program, $_version, $_author);
+$_program = 'check_haproxy';
+$_version = '1.0.0rc1';
+$_author  = 'Jonathan Wright <github@jon.than.io>';
+
+use constant {
+  # Field names to locations for all the CSV data provided by HAProxy
+  STAT_PROXY_NAME               => 0,
+  STAT_SERVICE_NAME             => 1,
+  STAT_QUEUED_REQUESTS          => 2,
+  STAT_QUEUED_MAX               => 3,
+  STAT_SESSIONS_CURRENT         => 4,
+  STAT_SESSIONS_MAX             => 5,
+  STAT_SESSIONS_LIMIT           => 6,
+  STAT_CONNECTIONS_TOTAL        => 7,
+  STAT_BYTES_IN                 => 8,
+  STAT_BYTES_OUT                => 9,
+  STAT_REQUESTS_DENIED          => 10,
+  STAT_RESPONSES_DENIED         => 11,
+  STAT_REQUESTS_ERROR           => 12,
+  STAT_CONNECTIONS_ERROR        => 13,
+  STAT_RESPONSES_ERROR          => 14,
+  STAT_CONNECTIONS_RETRIED      => 15,
+  STAT_CONNECTIONS_REDISPATCHED => 16,
+  STAT_STATUS                   => 17,
+  STAT_WEIGHT                   => 18,
+  STAT_SERVER_ACTIVE            => 19, STAT_SERVERS_ACTIVE => 19,
+  STAT_SERVER_BACKUP            => 20, STAT_SERVERS_BACKUP => 20,
+  STAT_CHECKS_FAIL              => 21,
+  STAT_CHECKS_GO_DOWN           => 22,
+  STAT_CHECKS_LAST_CHANGE       => 23,
+  STAT_CHECKS_DOWNTIME          => 24,
+  STAT_QUEUED_LIMIT             => 25,
+  STAT_PID                      => 26,
+  STAT_UID                      => 27,
+  STAT_SID                      => 28,
+  STAT_THROTTLE                 => 29,
+  STAT_SESSIONS_TOTAL           => 30,
+  STAT_TRACKED                  => 31,
+  STAT_SERVICE_TYPE             => 32,
+  STAT_SESSIONS_RATE_CURRENT    => 33,
+  STAT_SESSIONS_RATE_LIMIT      => 34,
+  STAT_SESSIONS_RATE_MAX        => 35,
+  STAT_CHECK_STATUS             => 36,
+  STAT_CHECK_CODE               => 37,
+  STAT_CHECK_DURATION           => 38,
+  STAT_RESPONSES_HTTP_1XX       => 39,
+  STAT_RESPONSES_HTTP_2XX       => 40,
+  STAT_RESPONSES_HTTP_3XX       => 41,
+  STAT_RESPONSES_HTTP_4XX       => 42,
+  STAT_RESPONSES_HTTP_5XX       => 43,
+  STAT_RESPONSES_HTTP_XXX       => 44,
+  STAT_CHECK_FAILED_DETAILS     => 45,
+  STAT_REQUESTS_RATE_CURRENT    => 46,
+  STAT_REQUESTS_RATE_MAX        => 47,
+  STAT_REQUESTS_TOTAL           => 48,
+  STAT_ABORTS_CLIENT            => 49,
+  STAT_ABORTS_SERVER            => 50,
+  STAT_COMPRESSOR_IN            => 51,
+  STAT_COMPRESSOR_OUT           => 52,
+  STAT_COMPRESSOR_BYPASSED      => 53,
+  STAT_COMPRESSOR_REQUESTS      => 54,
+  STAT_SESSIONS_LAST            => 55,
+  STAT_CHECK_HEALTH_LAST        => 56,
+  STAT_CHECK_AGENT_LAST         => 57,
+  STAT_TIME_QUEUE               => 58,
+  STAT_TIME_CONNECT             => 59,
+  STAT_TIME_RESPONSE            => 60,
+  STAT_TIME_TOTAL               => 61,
+  # Types used by HAProxy for some fields
+  TYPE_FRONTEND                 => 0,
+  TYPE_BACKEND                  => 1,
+  TYPE_SERVER                   => 2,
+  TYPE_LISTENER                 => 3,
+};
+
+use constant {
+  LIMIT_BACKEND_CHECK           => 'u',
+  LIMIT_WARN_BACKEND_UP         => 5,
+  LIMIT_CRIT_BACKEND_UP         => 2,
+  LIMIT_WARN_BACKEND_DOWN       => 2,
+  LIMIT_CRIT_BACKEND_DOWN       => 5,
+  LIMIT_WARN_BACKEND_SESSIONS   => 0.75,  # Percentages
+  LIMIT_CRIT_BACKEND_SESSIONS   => 0.90,
+  LIMIT_WARN_BACKEND_QUEUE      => 0.25,
+  LIMIT_CRIT_BACKEND_QUEUE      => 0.50,
+  LIMIT_WARN_LIMITS             => 0.75,
+  LIMIT_CRIT_LIMITS             => 0.90,
+};
+
+use constant EXIT_STATUS => qw(OK WARNING CRITICAL UNKNOWN);
+
+use constant {
+  EXIT_OK                       => 0,
+  EXIT_WARNING                  => 1,
+  EXIT_CRITICAL                 => 2,
+  EXIT_UNKNOWN                  => 3,
+};
+
+# Alias _ to sprintf
+sub _ {return sprintf(shift, @_)}
+
+# Create hash array for holding all configuration variables
+our (%opt, %data, %checks);
+%opt = (
+  'check_frontends' => 1,
+  'check_backends'  => 1,
+  'check_servers'   => 1,
+  'socket'          => '/var/run/haproxy.sock',
+  'debug'           => 0,
+  'defaults'        => undef,
+);
+
+# Somewhere to store messages
+our (@critical, @warning);
+
+sub main {
+  my (@overrides);
+
+  GetOptions(
+    'f'       => \$opt{'check_frontends'}, 'frontends!'       => \$opt{'check_frontends'},
+    'b'       => \$opt{'check_backends'},  'backends!'        => \$opt{'check_backends'},
+    's'       => \$opt{'check_servers'},   'servers!'         => \$opt{'check_servers'},
+    'S=s'     => \$opt{'socket'},          'socket=s'         => \$opt{'socket'},
+    'd'       => \$opt{'debug'},           'debug!'           => \$opt{'debug'},
+    'O=s{1,}' => \@overrides,              'overrides=s{1,}'  => \@overrides,
+    'D=s'     => \$opt{'defaults'},        'defaults=s'       => \$opt{'defaults'},
+  );
+
+  my $socket = IO::Socket::UNIX->new(
+    Peer    => $opt{'socket'},
+    Type    => SOCK_STREAM,
+    Timeout => 1,
+  ) or unknown ("Cannot connect to socket ".$opt{'socket'}, 1);
+
+  %data   = get_data($socket);
+  %checks = build_checks(\@overrides);
+
+  check_frontends() if $opt{'check_frontends'};
+  check_backends()  if $opt{'check_backends'};
+  check_servers()   if $opt{'check_servers'};
+
+  my ($frontends, $backends, $servers, $services) = (0,0,0,0);
+  my (%servers);
+
+  foreach my $service (sort keys %data) {
+    switch ($data{$service}{'type'}) {
+      case TYPE_FRONTEND {
+        ++$frontends;
+      }
+      case TYPE_BACKEND {
+        ++$backends;
+        foreach my $server (sort keys %{$data{$service}{'servers'}}) {
+          next if $data{$service}{'servers'}{$server}{'backup'};
+          ++$services;
+          unless (exists $servers{$server}) {
+            ++$servers;
+            $servers{$server} = 1;
+          }
+        }
+      }
+    }
+  }
+
+  do_success(
+    _('HAProxy is functioning within established parameters. '.
+      '(%d frontends, %d backends, %d servers, %d services)',
+        $frontends, $backends, $servers, $services)
+  );
+}
+
+sub _debug {
+  return unless $opt{'debug'};
+  printf "%s{} %s\n", shift, shift;
+}
+
+sub _report {
+  my ($status, $message) = (shift, shift);
+  croak('No message given') unless $message;
+  _debug('report', "with status ${status} and message '${message}'");
+
+  printf "%s: %s (%s %s)\n", (EXIT_STATUS)[$status], $message, $_program, $_version;
+  exit $status;
+}
+
+sub do_success {
+  _report(EXIT_OK, shift);
+}
+
+sub do_warning {
+  my ($message) = shift;
+  push(@warning, $message);
+  _report(EXIT_WARNING, $message);
+}
+
+sub do_critical {
+  my ($message, $_croak) = (shift, shift);
+  croak($message) if $opt{'debug'} and $_croak;
+  push(@critical, $message);
+  _report(EXIT_CRITICAL, $message);
+}
+
+sub do_unknown {
+  my ($message) = shift;
+  confess($message) if $opt{'debug'};
+  _report(EXIT_UNKNOWN, $message);
+}
+
+sub check_pass {
+  my ($state, $threshold, $value, $max) = (shift, shift, shift, shift);
+
+  # Sanity checking
+  do_unknown(_('Negative check value: %d', $value)) if $value < 0;
+  do_unknown(_('Negative check threshold: %d', $threshold)) if $threshold < 0;
+  do_unknown(_('No (or invalid) max value for percentage threshold: %s', $max || 'undef'))
+    if $threshold < 1 and (not $max or not $max =~ /^[0-9]+(\.[0-9]+)?$/
+                                    or not ($max > 0 and $max >= $value));
+
+  switch ($state) {
+    case 'u' {
+      if ($threshold < 1) {
+        _debug('check_pass', _("%.2f >= (%.2f * %.2f)", $value, $max, $threshold));
+        return $value >= ($max * $threshold);
+      } else {
+        _debug('check_pass', _("%.2f >= %.2f", $value, $threshold));
+        return $value >= $threshold;
+      }
+    }
+    case 'd' {
+      if ($threshold < 1) {
+        _debug('check_pass', _("%.2f < (%.2f * %.2f)", $value, $max, $threshold));
+        return $value < ($max * $threshold);
+      } else {
+        _debug('check_pass', _("%.2f < %.2f", $value, $threshold));
+        return $value < $threshold;
+      }
+    }
+    case 't' {
+      _debug('check_pass', _("%.2f < (%.2f * %.2f)", $value, $max, $threshold));
+      return $value < ($max * $threshold);
+    }
+    default {
+      # More sanity checking
+      do_unknown("Invalid state check: ${state}");
+    }
+  }
+}
+
+sub get_data {
+  my ($s, %v); $s = shift;
+
+  _debug('get_data', 'is reading data from HAProxy');
+
+  print $s "show stat\n";
+  while (<$s>) {
+    chomp; next unless length;
+    my @stat = split (',');
+
+    switch ($stat[STAT_SERVICE_TYPE]) {
+      # Process all FRONTEND type entries; these are singular and are totals
+      # only for each of the frontends configured
+      case TYPE_FRONTEND {
+        $v{$stat[STAT_PROXY_NAME]} = {
+          type        => TYPE_FRONTEND,
+          connections => $stat[STAT_CONNECTIONS_TOTAL],
+          sessions    => {
+            current   => $stat[STAT_SESSIONS_CURRENT],
+            limit     => ($stat[STAT_SESSIONS_LIMIT] ? $stat[STAT_SESSIONS_LIMIT] : 0),
+          },
+          status      => $stat[STAT_STATUS],
+          queued      => 0,
+        };
+      }
+      # Process all BACKEND type entries; these are the totals for each backend
+      # and don't have the same amount of information as SERVERs
+      case TYPE_BACKEND {
+        # We can't 'set' the hash here as the backend totals are normally after
+        # the backend's servers, so would override anything previously set
+        # in TYPE_SERVER
+        $v{$stat[STAT_PROXY_NAME]}{'type'} = TYPE_BACKEND;
+        $v{$stat[STAT_PROXY_NAME]}{'connections'} = $stat[STAT_CONNECTIONS_TOTAL];
+        $v{$stat[STAT_PROXY_NAME]}{'sessions'} = {
+          current     => $stat[STAT_SESSIONS_CURRENT],
+          limit       => ($stat[STAT_SESSIONS_LIMIT] ? $stat[STAT_SESSIONS_LIMIT] : 0),
+        };
+        $v{$stat[STAT_PROXY_NAME]}{'queued'} = $stat[STAT_QUEUED_REQUESTS];
+        $v{$stat[STAT_PROXY_NAME]}{'active'} = $stat[STAT_SERVERS_ACTIVE];
+        $v{$stat[STAT_PROXY_NAME]}{'backup'} = $stat[STAT_SERVERS_BACKUP];
+      }
+      # Process all SERVER type entries, which are the most details and give
+      # information about how each server is responding
+      case TYPE_SERVER {
+        # Only set the server itself directly, otherwise we may override
+        # anything previously set
+        $v{$stat[STAT_PROXY_NAME]}{'servers'}{$stat[STAT_SERVICE_NAME]} = {
+          active      => ($stat[STAT_SERVER_ACTIVE] ? 1 : 0),
+          backup      => ($stat[STAT_SERVER_BACKUP] ? 1 : 0),
+          up          => ($stat[STAT_STATUS] eq 'UP' ? 1 : 0),
+          down        => ($stat[STAT_STATUS] eq 'DOWN' ? 1 : 0),
+          disabled    => ($stat[STAT_STATUS] =~ /^(MAINT|DRAIN|NOLB)/i ? 1 : 0),
+          connections => $stat[STAT_CONNECTIONS_TOTAL],
+          sessions    => {
+            current   => $stat[STAT_SESSIONS_CURRENT],
+            limit     => ($stat[STAT_SESSIONS_LIMIT] ? $stat[STAT_SESSIONS_LIMIT] : 0),
+          },
+          queued      => {
+            current   => $stat[STAT_QUEUED_REQUESTS],
+            limit     => ($stat[STAT_QUEUED_LIMIT] ? $stat[STAT_QUEUED_LIMIT] : 0),
+          },
+          status      => $stat[STAT_STATUS],
+          timing      => {
+            queue     => $stat[STAT_TIME_QUEUE],
+            connect   => $stat[STAT_TIME_CONNECT],
+            response  => $stat[STAT_TIME_RESPONSE],
+            total     => $stat[STAT_TIME_TOTAL]
+          },
+        };
+      }
+    }
+  }
+
+  # print Dumper(\%v);
+  return %v;
+}
+
+sub build_checks {
+  my $overrides = shift;
+  my @overrides = @{$overrides};
+
+  my (%checks, $state, $be_warn, $be_crit, $limit_warn, $limit_crit);
+
+  # Setup the defaults for all checks
+  switch (LIMIT_BACKEND_CHECK) {
+    case 'u' {
+      $state      = 'u';
+      $be_warn    = LIMIT_WARN_BACKEND_UP;
+      $be_crit    = LIMIT_CRIT_BACKEND_UP;
+    }
+    default {
+      $state      = 'd';
+      $be_warn    = LIMIT_WARN_BACKEND_DOWN;
+      $be_crit    = LIMIT_CRIT_BACKEND_DOWN;
+    }
+  }
+
+  $limit_warn = LIMIT_WARN_LIMITS;
+  $limit_crit = LIMIT_CRIT_LIMITS;
+
+  # See if there is an override for the defaults, then use those
+  if ($opt{'defaults'} =~ /([ud]?),(?:([0-9]*)(?:,([0-9]*)(?:,([0-9]*)%?(?:,([0-9]*)%?)?)?)?)?/) {
+    $state      =  $1       if $1;
+    $be_warn    =  $2       if $2;
+    $be_crit    =  $3       if $3;
+    $limit_warn = ($4/100)  if $4;
+    $limit_crit = ($5/100)  if $5;
+    _debug('build_checks',
+           _('setting defaults to %s,%d,%d,%.2f,%.2f',
+             $state, $be_warn, $be_crit, $limit_warn, $limit_crit));
+
+  }
+
+  # Build the defaults for all checks
+  foreach my $service (sort keys %data) {
+    my $type;
+
+    switch ($data{$service}{'type'}) {
+      case TYPE_FRONTEND {
+        $type = 'FRONTEND';
+        %{$checks{$service}} = (
+          limit_warn  => $limit_warn,
+          limit_crit  => $limit_crit,
+        );
+      }
+      case TYPE_BACKEND {
+        $type = 'BACKEND';
+        %{$checks{$service}} = (
+          state       => $state,
+          be_warn     => $be_warn,
+          be_crit     => $be_crit,
+          limit_warn  => $limit_warn,
+          limit_crit  => $limit_crit,
+        );
+      }
+    }
+
+    _debug('build_checks', _('building %s check for %s', $type, $service));
+  }
+
+  # Merge the two arrays
+  foreach my $override (sort @overrides) {
+    my ($service, $state, $be_warn, $be_crit, $limit_warn, $limit_crit);
+
+    _debug('build_checks', _('processing override %s', $override));
+
+    next unless ($override =~ /([^:]+):([ud]?),(?:([0-9]*)(?:,([0-9]*)(?:,([0-9]*)%?(?:,([0-9]*)%?)?)?)?)?/);
+
+    next unless exists $data{$1};
+
+    if ($data{$1}{'type'} eq TYPE_BACKEND) {
+      $checks{$1}{'state'}    =  $2      if $2 and ($2 eq 'u' or $2 eq 'd');
+      $checks{$1}{'be_warn'}  =  $3      if $3 and $3 >= 0;
+      $checks{$1}{'be_crit'}  =  $4      if $4 and $4 >= 0;
+    }
+
+    $checks{$1}{'limit_warn'} = ($5/100) if $5 and $5 > 0 and $5 <= 100;
+    $checks{$1}{'limit_crit'} = ($6/100) if $6 and $6 > 0 and $6 <= 100;
+
+    _debug('build_checks',
+           _('setting override for %s to %s,%d,%d,%.2f,%.2f',
+             $1,
+             $checks{$1}{'state'},
+             $checks{$1}{'be_warn'},
+             $checks{$1}{'be_crit'},
+             $checks{$1}{'limit_warn'},
+             $checks{$1}{'limit_crit'}));
+  }
+
+  return %checks;
+}
+
+sub check_frontends {
+  _debug('check_frontends', 'is starting check on frontends');
+  foreach my $service (sort keys %data) {
+    next unless $data{$service}{'type'} eq TYPE_FRONTEND;
+    _debug('check_frontends', _('checking FRONTEND %s', $service));
+
+    _debug('check_frontends', 'running OPEN check');
+
+    do_critical(_('FRONTEND %s is %s', $service, $data{$service}{'status'}))
+      unless $data{$service}{'status'} eq 'OPEN';
+
+    # Theses no supported Queueing on the Frontends, so no checks for that
+    # need to be done here, just for Sessions.
+
+    next unless $data{$service}{'sessions'}{'limit'} > 0;
+    _debug('check_frontends', 'running Sessions check');
+    _debug('check_frontends', _('found %d (limit %d); thresholds are %.1f%%, %.1f%%',
+                                $data{$service}{'sessions'}{'current'},
+                                $data{$service}{'sessions'}{'limit'},
+                                ($checks{$service}{'limit_warn'}*100),
+                                ($checks{$service}{'limit_crit'}*100)));
+
+    do_critical(_('Sessions for FRONTEND %s has passed %.2f%% of Limit (%d active, %d limit)',
+                  $service, ($checks{$service}{'limit_crit'}*100),
+                  $data{$service}{'sessions'}{'current'},
+                  $data{$service}{'sessions'}{'limit'}))
+      unless check_pass('t', $checks{$service}{'limit_crit'},
+                             $data{$service}{'sessions'}{'current'},
+                             $data{$service}{'sessions'}{'limit'});
+
+    do_warning(_('Sessions for FRONTEND %s has passed %.2f%% of Limit (%d active, %d limit)',
+                  $service, ($checks{$service}{'limit_warn'}*100),
+                  $data{$service}{'sessions'}{'current'},
+                  $data{$service}{'sessions'}{'limit'}))
+      unless check_pass('t', $checks{$service}{'limit_warn'},
+                             $data{$service}{'sessions'}{'current'},
+                             $data{$service}{'sessions'}{'limit'});
+
+  }
+
+}
+
+sub check_backends {
+  _debug('check_backends', 'is starting check on backends');
+  # Run checks for each of the backends
+  foreach my $service (sort keys %data) {
+    next unless $data{$service}{'type'} eq TYPE_BACKEND;
+    _debug('check_backends', _('checking BACKEND %s', $service));
+
+    my ($msg, $total, $up, $down, $disabled) = ('',0,0,0,0);
+
+    foreach my $server (sort keys %{$data{$service}{'servers'}}) {
+      ++$total unless $data{$service}{'servers'}{$server}{'backend'};
+      ++$up        if $data{$service}{'servers'}{$server}{'up'};
+      ++$down      if $data{$service}{'servers'}{$server}{'down'};
+      ++$disabled  if $data{$service}{'servers'}{$server}{'disabled'};
+    }
+
+    _debug('check_backends', _('found %d up, %d down, %d disabled (%d total)',
+                               $up, $down, $disabled, $total));
+
+    switch ($checks{$service}{'state'}) {
+      case 'u' {
+        $msg = 'BACKEND %s has fallen below %d available server(s) (%d up, %d down, %d disabled)';
+      }
+      case 'd' {
+        $msg = 'BACKEND %s has passed %d down/disabled servers (%d up, %d down, %d disabled)',
+      }
+    }
+
+    do_critical(_($msg, $service, $checks{$service}{'be_crit'}, $up, $down, $disabled))
+      unless check_pass($checks{$service}{'state'}, $checks{$service}{'be_crit'},
+        ($checks{$service}{'state'} eq 'u' ? $up : ($down+$disabled)), $total);
+    do_warning(_($msg, $service, $checks{$service}{'be_warn'}, $up, $down, $disabled))
+      unless check_pass($checks{$service}{'state'}, $checks{$service}{'be_warn'},
+        ($checks{$service}{'state'} eq 'u' ? $up : ($down+$disabled)), $total);
+
+    next unless $data{$service}{'sessions'}{'limit'} > 0;
+    _debug('check_frontends', 'running Sessions check');
+    _debug('check_backends', _('found %d (limit %d); threshold is %.1f%% (warn) or %.1f%% (crit)',
+                               $data{$service}{'sessions'}{'current'},
+                               $data{$service}{'sessions'}{'limit'},
+                               ($checks{$service}{'limit_warn'}*100),
+                               ($checks{$service}{'limit_crit'}*100)));
+
+    do_critical(_('Sessions for BACKEND %s has passed %d%% of Limit (%d active, %d limit)',
+                  $service, ($checks{$service}{'limit_crit'}*100),
+                  $data{$service}{'sessions'}{'current'},
+                  $data{$service}{'sessions'}{'limit'}))
+      unless check_pass('t', $checks{$service}{'limit_crit'},
+                             $data{$service}{'sessions'}{'current'},
+                             $data{$service}{'sessions'}{'limit'});
+
+    do_warning(_('Sessions for BACKEND %s has passed %d%% of Limit (%d active, %d limit)',
+                  $service, ($checks{$service}{'limit_warn'}*100),
+                  $data{$service}{'sessions'}{'current'},
+                  $data{$service}{'sessions'}{'limit'}))
+      unless check_pass('t', $checks{$service}{'limit_warn'},
+                             $data{$service}{'sessions'}{'current'},
+                             $data{$service}{'sessions'}{'limit'});
+
+  }
+}
+
+sub check_servers {
+  _debug('check_servers', 'is starting check on servers');
+  # Run checks for each of servers in each of the backends
+  foreach my $service (sort keys %data) {
+    next unless $data{$service}{'type'} eq TYPE_BACKEND;
+    foreach my $server (sort keys %{$data{$service}{'servers'}}) {
+      next if $data{$service}{'servers'}{$server}{'backend'};
+      _debug('check_servers', _('checking SERVER %s on BACKEND %s', $server, $service));
+
+      if ($data{$service}{'servers'}{$server}{'sessions'}{'limit'} > 0) {
+        _debug('check_servers', 'running Sessions check');
+        _debug('check_servers', _('found %d (limit %d); thresholds are %.1f%%, %.1f%%',
+                                  $data{$service}{'servers'}{$server}{'sessions'}{'current'},
+                                  $data{$service}{'servers'}{$server}{'sessions'}{'limit'},
+                                  ($checks{$service}{'limit_warn'}*100),
+                                  ($checks{$service}{'limit_crit'}*100)));
+
+        do_critical(_('Sessions for SERVER %s on BACKEND has passed %d%% of Limit (%d active, %d limit)',
+                      $server, $service, ($checks{$service}{'limit_crit'}*100),
+                      $data{$service}{'servers'}{$server}{'sessions'}{'current'},
+                      $data{$service}{'servers'}{$server}{'sessions'}{'limit'}))
+          unless check_pass('t', $checks{$service}{'limit_crit'},
+                                 $data{$service}{'servers'}{$server}{'sessions'}{'current'},
+                                 $data{$service}{'servers'}{$server}{'sessions'}{'limit'});
+
+        do_warning(_('Sessions for SERVER %s on BACKEND %s has passed %d%% of Limit (%d active, %d limit)',
+                      $server, $service, ($checks{$service}{'limit_warn'}*100),
+                      $data{$service}{'servers'}{$server}{'sessions'}{'current'},
+                      $data{$service}{'servers'}{$server}{'sessions'}{'limit'}))
+          unless check_pass('t', $checks{$service}{'limit_warn'},
+                                 $data{$service}{'servers'}{$server}{'sessions'}{'current'},
+                                 $data{$service}{'servers'}{$server}{'sessions'}{'limit'});
+
+      }
+
+      if ($data{$service}{'servers'}{$server}{'queued'}{'limit'} > 0) {
+        _debug('check_servers', 'running Queue check');
+        _debug('check_servers', _('found %d (limit %d); thresholds are %.1f%%, %.1f%%',
+                                  $data{$service}{'servers'}{$server}{'sessions'}{'current'},
+                                  $data{$service}{'servers'}{$server}{'sessions'}{'limit'},
+                                  ($checks{$service}{'limit_warn'}*100),
+                                  ($checks{$service}{'limit_crit'}*100)));
+
+        do_critical(_('Queue for SERVER %s on BACKEND has passed %d%% of Limit (%d active, %d limit)',
+                      $server, $service, ($checks{$service}{'limit_crit'}*100),
+                      $data{$service}{'servers'}{$server}{'queued'}{'current'},
+                      $data{$service}{'servers'}{$server}{'queued'}{'limit'}))
+          unless check_pass('t', $checks{$service}{'limit_crit'},
+                                 $data{$service}{'servers'}{$server}{'queued'}{'current'},
+                                 $data{$service}{'servers'}{$server}{'queued'}{'limit'});
+
+        do_warning(_('Queue for SERVER %s on BACKEND %s has passed %d%% of Limit (%d active, %d limit)',
+                      $server, $service, ($checks{$service}{'limit_warn'}*100),
+                      $data{$service}{'servers'}{$server}{'queued'}{'current'},
+                      $data{$service}{'servers'}{$server}{'queued'}{'limit'}))
+          unless check_pass('t', $checks{$service}{'limit_warn'},
+                                 $data{$service}{'servers'}{$server}{'queued'}{'current'},
+                                 $data{$service}{'servers'}{$server}{'queued'}{'limit'});
+      }
+    }
+  }
+}
+
+# Run the program
+&main();
