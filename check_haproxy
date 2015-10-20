@@ -32,7 +32,7 @@ use Data::Dumper;
 # Configure Program details
 our ($_program, $_version, $_author);
 $_program = 'check_haproxy';
-$_version = '1.0.2';
+$_version = '1.0.3';
 $_author  = 'Jonathan Wright <github@jon.than.io>';
 
 use constant {
@@ -207,7 +207,6 @@ sub main {
   );
 }
 
-# ------------------------------------------------------------------------------
 sub _debug {
   return unless $opt{'debug'};
   printf "%s{} %s\n", shift, shift;
@@ -252,33 +251,45 @@ sub check_pass {
   return 0 if $state eq 'x';
 
   # Sanity checking
-  do_unknown(_('Negative check value: %d', $value)) if $value < 0;
-  do_unknown(_('Negative check threshold: %d', $threshold)) if $threshold < 0;
-  do_unknown(_('No (or invalid) max value for percentage threshold: %s', $max || 'undef'))
-    if $threshold < 1 and (not $max or not $max =~ /^[0-9]+(\.[0-9]+)?$/
-                                    or not ($max > 0 and $max >= $value));
+  do_unknown(
+    _('Negative check value for state %s: %d', $state, $value)
+  ) if $value < 0;
+
+  do_unknown(
+    _('Negative check threshold for state %s: %d', $state, $threshold)
+  ) if $threshold < 0;
+
+  do_unknown(
+    _('Negative check maximum for state %s: %d', $state, $max)
+  ) if $max < 0;
+
+  do_unknown(
+    _('No max value provided for percentage threshold on state %d: %s',
+      $state, $max || 'undef')
+  ) if ($threshold < 1 and $threshold > 0)
+    and (not $max or not $max =~ /^[0-9]+(\.[0-9]+)?$/);
 
   switch ($state) {
     case 'u' {
-      if ($threshold < 1) {
-        _debug('check_pass', _("%.2f >= (%.2f * %.2f)", $value, $max, $threshold));
+      if ($threshold < 1 and $threshold > 0) {
+        _debug('check_pass', _("UP: %d >= (%.1f%% of %d)", $value, ($threshold*100), $max));
         return $value >= ($max * $threshold);
       } else {
-        _debug('check_pass', _("%.2f >= %.2f", $value, $threshold));
+        _debug('check_pass', _("UP: %d >= %d", $value, $threshold));
         return $value >= $threshold;
       }
     }
     case 'd' {
-      if ($threshold < 1) {
-        _debug('check_pass', _("%.2f < (%.2f * %.2f)", $value, $max, $threshold));
+      if ($threshold < 1 and $threshold > 0) {
+        _debug('check_pass', _("DOWN: %d >= (%.1f%% of %d)", $value, ($threshold*100), $max));
         return $value < ($max * $threshold);
       } else {
-        _debug('check_pass', _("%.2f < %.2f", $value, $threshold));
+        _debug('check_pass', _("DOWN: %d < %d", $value, $threshold));
         return $value < $threshold;
       }
     }
     case 't' {
-      _debug('check_pass', _("%.2f < (%.2f * %.2f)", $value, $max, $threshold));
+      _debug('check_pass', _("Threshold: %d < (%.1f%% of %d)", $value, ($threshold*100), $max));
       return $value < ($max * $threshold);
     }
     default {
@@ -582,7 +593,7 @@ sub check_servers {
                                   ($checks{$service}{'limit_warn'}*100),
                                   ($checks{$service}{'limit_crit'}*100)));
 
-        do_critical(_('Sessions for SERVER %s on BACKEND has passed %d%% of Limit (%d active, %d limit)',
+        do_critical(_('Sessions for SERVER %s on BACKEND %s has passed %d%% of Limit (%d active, %d limit)',
                       $server, $service, ($checks{$service}{'limit_crit'}*100),
                       $data{$service}{'servers'}{$server}{'sessions'}{'current'},
                       $data{$service}{'servers'}{$server}{'sessions'}{'limit'}))
@@ -742,6 +753,11 @@ set for each frontend/backend.
 1.0.1    - Added prefix to response message.
 1.0.2    - Removed old constants no longer needed.
          - Added help POD messages.
+1.0.3    - Improved error messages around check_pass.
+         - Fixed critical messaeg for sessions levels: Missing substitution in
+           the report string.
+         - Remove sanity check forcing a maximum value to be blow any threshold
+           as it seams that in some cases this is possible in HAProxy.
 
 =head1 AUTHOR
 
