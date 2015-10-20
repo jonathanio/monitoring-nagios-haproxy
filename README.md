@@ -7,7 +7,7 @@ frontend/backend.
 
 ## Usage
 
-    check_haproxy [--defaults (defaults)] [--overrides S<(1 2 ... n)>]
+    check_haproxy [--defaults (defaults)] [--overrides (1 2 ... n)]
       [--[no]frontends] [--[no]backends] [--[no]servers]
       [--socket (path)] [--help]
 
@@ -16,12 +16,12 @@ frontend/backend.
 Enable/disable checks for the frontends in HAProxy (that they're marked as OPEN
 and the session limits haven't been reached).
 
-### -b, --[no]backends>
+### -b, --[no]backends
 
 Enable/disable checks for the backends in HAProxy (that they have the required
 quorum of servers, and that the session limits haven't been reached).
 
-### -s, --[no]servers>
+### -s, --[no]servers
 
 Enable/disable checks for the servers in HAProxy (that they haven't reached the
 limits for the sessions or for queues).
@@ -57,7 +57,7 @@ To override only some of these values from the pre-set defaults
 leave checks as up, but increase the server WARN/CRIT to 10/7. or to switch to
 use down, use `d,`, or off with `x`.
 
-### -O, --overrides> (override override ... override)
+### -O, --overrides (override override ... override)
 
 Override the defaults for a particular frontend or backend, in the form
 `name:override`, where `override` is the same format as `--defaults` above. For
