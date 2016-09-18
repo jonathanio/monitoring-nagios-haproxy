@@ -724,7 +724,7 @@ specifically set by --overrides). Takes the form:
 Each of these is optional, but the positioning is important. To fully override,
 set (for example):
 
-  C<u,10,5,.25,0.5>
+  C<u,10,5,25,50>
 
 which means:
 
@@ -745,13 +745,13 @@ down.
 CRITICAL if less than 5 servers are available, or if at least that many have
 gone away.
 
-=item C<.25>
+=item C<25>
 
 WARNING if more any frontend, backend, or individual server has gone over 25% of
 it's maximum allowed sessions (or any queue for any server on the backend is at
 least 25% full).
 
-=item C<0.5>
+=item C<50>
 
 CRITICAL for the same reasons as previous, but we've reached 50% of these
 levels.
@@ -759,7 +759,7 @@ levels.
 =back
 
 To override only some of these values from the pre-set defaults
-(C<u,5,2,.75..9>), simply leave the others as empty, for example: C<,10,7> will
+(C<u,5,2,75,90>), simply leave the others as empty, for example: C<,10,7> will
 leave checks as up, but increase the server WARN/CRIT to 10/7. or to switch to
 use down, use C<d,>, or off with C<x>.
 
