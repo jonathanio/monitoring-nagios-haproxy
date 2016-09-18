@@ -32,7 +32,7 @@ use Data::Dumper;
 # Configure Program details
 our ($_program, $_version, $_author);
 $_program = 'check_haproxy';
-$_version = '1.0.3';
+$_version = '1.0.4';
 $_author  = 'Jonathan Wright <github@jon.than.io>';
 
 use constant {
