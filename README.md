@@ -36,7 +36,7 @@ specifically set by --overrides). Takes the form:
 Each of these is optional, but the positioning is important. To fully override,
 set (for example):
 
-    u,10,5,.25,0.5
+    u,10,5,25,50
 
 which means:
 
@@ -46,14 +46,14 @@ which means:
     servers are down.
   * `5`: CRITICAL if less than 5 servers are available, or if at least that
     many have gone away.
-  * `.25`: WARNING if more any frontend, backend, or individual server has gone
+  * `25`: WARNING if more any frontend, backend, or individual server has gone
     over 25% of it's maximum allowed sessions (or any queue for any server on
     the backend is at least 25% full).
-  * `0.5`: CRITICAL for the same reasons as previous, but we've reached 50% of
+  * `50`: CRITICAL for the same reasons as previous, but we've reached 50% of
     these levels.
 
 To override only some of these values from the pre-set defaults
-(`u,5,2,.75,.9`), simply leave the others as empty, for example: `,10,7` will
+(`u,5,2,75,90`), simply leave the others as empty, for example: `,10,7` will
 leave checks as up, but increase the server WARN/CRIT to 10/7. or to switch to
 use down, use `d,`, or off with `x`.
 
@@ -72,6 +72,11 @@ space-delimited options:
 Path to the socket `check_haproxy` should connect to (requires read/write
 permissions and must be at least user level; no operator or admin privileges
 needed).
+
+### -v, --verbose
+
+By default, the check will return on the first issue found. Enable verbose mode
+in order to return details on all issues found.
 
 ## Licence
 
