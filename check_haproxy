@@ -136,12 +136,13 @@ our (%opt, %data, %checks);
   'check_servers'   => 1,
   'socket'          => '/var/run/haproxy.sock',
   'debug'           => 0,
+  'verbose'         => 0,
   'defaults'        => undef,
   'help'            => 0,
 );
 
 # Somewhere to store messages
-our (@critical, @warning);
+our (@critical, @warning, @success, @unknown);
 
 sub main {
   my (@overrides);
@@ -152,6 +153,7 @@ sub main {
     's'       => \$opt{'check_servers'},   'servers!'         => \$opt{'check_servers'},
     'S=s'     => \$opt{'socket'},          'socket=s'         => \$opt{'socket'},
     'd'       => \$opt{'debug'},           'debug!'           => \$opt{'debug'},
+    'v'       => \$opt{'verbose'},         'verbose!'         => \$opt{'verbose'},
     'O=s{1,}' => \@overrides,              'overrides=s{1,}'  => \@overrides,
     'D=s'     => \$opt{'defaults'},        'defaults=s'       => \$opt{'defaults'},
     '-h'      => \$opt{'help'},            '--help'           => \$opt{'help'},
@@ -205,6 +207,7 @@ sub main {
       '(%d frontends, %d backends, %d servers, %d services)',
         $frontends, $backends, $servers, $services)
   );
+  report_all();
 }
 
 sub _debug {
@@ -221,27 +224,55 @@ sub _report {
   exit $status;
 }
 
+sub report_all {
+  my $status;
+  _debug('report_all', 'is checking messages and exiting');
+
+  foreach my $message (sort @critical) {
+    printf "HAPROXY %s: %s (%s %s)\n", (EXIT_STATUS)[EXIT_CRITICAL], $message, $_program, $_version;
+    $status = EXIT_CRITICAL unless defined $status;
+  }
+  foreach my $message (sort @warning) {
+    printf "HAPROXY %s: %s (%s %s)\n", (EXIT_STATUS)[EXIT_WARNING], $message, $_program, $_version;
+    $status = EXIT_WARNING unless defined $status;
+  }
+  foreach my $message (sort @unknown) {
+    printf "HAPROXY %s: %s (%s %s)\n", (EXIT_STATUS)[EXIT_UNKNOWN], $message, $_program, $_version;
+    $status = EXIT_UNKNOWN unless defined $status;
+  }
+  unless (defined $status) {
+    foreach my $message (sort @success) {
+      printf "HAPROXY %s: %s (%s %s)\n", (EXIT_STATUS)[EXIT_OK], $message, $_program, $_version;
+    }
+    $status = EXIT_OK;
+  }
+  exit $status;
+}
+
 sub do_success {
-  _report(EXIT_OK, shift);
+  my ($message, $force) = (shift, shift);
+  push(@success, $message);
+  _report(EXIT_OK, $message) unless ($opt{'verbose'} and !$force);
 }
 
 sub do_warning {
-  my ($message) = shift;
+  my ($message, $force) = (shift, shift);
   push(@warning, $message);
-  _report(EXIT_WARNING, $message);
+  _report(EXIT_WARNING, $message) unless ($opt{'verbose'} and !$force);
 }
 
 sub do_critical {
-  my ($message, $_croak) = (shift, shift);
+  my ($message, $force, $_croak) = (shift, shift, shift);
   croak($message) if $opt{'debug'} and $_croak;
   push(@critical, $message);
-  _report(EXIT_CRITICAL, $message);
+  _report(EXIT_CRITICAL, $message) unless ($opt{'verbose'} and !$force);
 }
 
 sub do_unknown {
-  my ($message) = shift;
+  my ($message, $force) = (shift, shift);
   confess($message) if $opt{'debug'};
-  _report(EXIT_UNKNOWN, $message);
+  push(@unknown, $message);
+  _report(EXIT_UNKNOWN, $message) unless ($opt{'verbose'} and !$force);
 }
 
 sub check_pass {
@@ -253,20 +284,20 @@ sub check_pass {
   # Sanity checking
   do_unknown(
     _('Negative check value for state %s: %d', $state, $value)
-  ) if $value < 0;
+  ) and return 0 if $value < 0;
 
   do_unknown(
     _('Negative check threshold for state %s: %d', $state, $threshold)
-  ) if $threshold < 0;
+  ) and return 0 if $threshold < 0;
 
   do_unknown(
     _('Negative check maximum for state %s: %d', $state, $max)
-  ) if $max < 0;
+  ) and return 0 if $max < 0;
 
   do_unknown(
     _('No max value provided for percentage threshold on state %d: %s',
       $state, $max || 'undef')
-  ) if ($threshold < 1 and $threshold > 0)
+  ) and return 0 if ($threshold < 1 and $threshold > 0)
     and (not $max or not $max =~ /^[0-9]+(\.[0-9]+)?$/);
 
   switch ($state) {
@@ -295,6 +326,7 @@ sub check_pass {
     default {
       # More sanity checking
       do_unknown("Invalid state check: ${state}");
+      return 0;
     }
   }
 }
@@ -496,6 +528,7 @@ sub check_frontends {
                   $service, ($checks{$service}{'limit_crit'}*100),
                   $data{$service}{'sessions'}{'current'},
                   $data{$service}{'sessions'}{'limit'}))
+      and next
       unless check_pass('t', $checks{$service}{'limit_crit'},
                              $data{$service}{'sessions'}{'current'},
                              $data{$service}{'sessions'}{'limit'});
@@ -504,6 +537,7 @@ sub check_frontends {
                   $service, ($checks{$service}{'limit_warn'}*100),
                   $data{$service}{'sessions'}{'current'},
                   $data{$service}{'sessions'}{'limit'}))
+      and next
       unless check_pass('t', $checks{$service}{'limit_warn'},
                              $data{$service}{'sessions'}{'current'},
                              $data{$service}{'sessions'}{'limit'});
@@ -542,9 +576,11 @@ sub check_backends {
     }
 
     do_critical(_($msg, $service, $checks{$service}{'be_crit'}, $up, $down, $disabled))
+      and next
       unless check_pass($checks{$service}{'state'}, $checks{$service}{'be_crit'},
         ($checks{$service}{'state'} eq 'u' ? $up : ($down+$disabled)), $total);
     do_warning(_($msg, $service, $checks{$service}{'be_warn'}, $up, $down, $disabled))
+      and next
       unless check_pass($checks{$service}{'state'}, $checks{$service}{'be_warn'},
         ($checks{$service}{'state'} eq 'u' ? $up : ($down+$disabled)), $total);
 
@@ -560,6 +596,7 @@ sub check_backends {
                   $service, ($checks{$service}{'limit_crit'}*100),
                   $data{$service}{'sessions'}{'current'},
                   $data{$service}{'sessions'}{'limit'}))
+      and next
       unless check_pass('t', $checks{$service}{'limit_crit'},
                              $data{$service}{'sessions'}{'current'},
                              $data{$service}{'sessions'}{'limit'});
@@ -568,6 +605,7 @@ sub check_backends {
                   $service, ($checks{$service}{'limit_warn'}*100),
                   $data{$service}{'sessions'}{'current'},
                   $data{$service}{'sessions'}{'limit'}))
+      and next
       unless check_pass('t', $checks{$service}{'limit_warn'},
                              $data{$service}{'sessions'}{'current'},
                              $data{$service}{'sessions'}{'limit'});
@@ -597,6 +635,7 @@ sub check_servers {
                       $server, $service, ($checks{$service}{'limit_crit'}*100),
                       $data{$service}{'servers'}{$server}{'sessions'}{'current'},
                       $data{$service}{'servers'}{$server}{'sessions'}{'limit'}))
+          and next
           unless check_pass('t', $checks{$service}{'limit_crit'},
                                  $data{$service}{'servers'}{$server}{'sessions'}{'current'},
                                  $data{$service}{'servers'}{$server}{'sessions'}{'limit'});
@@ -605,6 +644,7 @@ sub check_servers {
                       $server, $service, ($checks{$service}{'limit_warn'}*100),
                       $data{$service}{'servers'}{$server}{'sessions'}{'current'},
                       $data{$service}{'servers'}{$server}{'sessions'}{'limit'}))
+          and next
           unless check_pass('t', $checks{$service}{'limit_warn'},
                                  $data{$service}{'servers'}{$server}{'sessions'}{'current'},
                                  $data{$service}{'servers'}{$server}{'sessions'}{'limit'});
@@ -623,6 +663,7 @@ sub check_servers {
                       $server, $service, ($checks{$service}{'limit_crit'}*100),
                       $data{$service}{'servers'}{$server}{'queued'}{'current'},
                       $data{$service}{'servers'}{$server}{'queued'}{'limit'}))
+          and next
           unless check_pass('t', $checks{$service}{'limit_crit'},
                                  $data{$service}{'servers'}{$server}{'queued'}{'current'},
                                  $data{$service}{'servers'}{$server}{'queued'}{'limit'});
@@ -631,6 +672,7 @@ sub check_servers {
                       $server, $service, ($checks{$service}{'limit_warn'}*100),
                       $data{$service}{'servers'}{$server}{'queued'}{'current'},
                       $data{$service}{'servers'}{$server}{'queued'}{'limit'}))
+          and next
           unless check_pass('t', $checks{$service}{'limit_warn'},
                                  $data{$service}{'servers'}{$server}{'queued'}{'current'},
                                  $data{$service}{'servers'}{$server}{'queued'}{'limit'});
@@ -653,7 +695,7 @@ socket connection (by default, /var/run/haproxy.sock).
 
 check_haproxy [--defaults (defaults)] [--overrides S<(1 2 ... n)>]
   [--[no]frontends] [--[no]backends] [--[no]servers]
-  [--socket (path)] [--help]
+  [--socket (path)] [--verbose] [--help]
 
 =head1 OPTIONS
 
@@ -739,6 +781,13 @@ needed).
 
 =back
 
+=item B<-v>, B<--verbose>
+
+By default, the check will return on the first issue found. Enable verbose mode
+in order to return details on all issues found.
+
+=back
+
 =head1 DESCRIPTION
 
 B<This program> will connect to the HAProxy socket and parse the statistics to
@@ -758,6 +807,7 @@ set for each frontend/backend.
            the report string.
          - Remove sanity check forcing a maximum value to be blow any threshold
            as it seams that in some cases this is possible in HAProxy.
+1.0.4    - Add verbose mode to output all issues instead of exiting on first one.
 
 =head1 AUTHOR
 
