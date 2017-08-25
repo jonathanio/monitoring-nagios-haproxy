@@ -40,17 +40,17 @@ set (for example):
 
 which means:
 
-  * `u`: Check for servers up (`u`) or servers down (`d`), or disable all checks
-    on that particular frontend/backend (`x`).
-  * `10`: WARNING if less than 10 servers are up, or if at least that many
-    servers are down.
-  * `5`: CRITICAL if less than 5 servers are available, or if at least that
-    many have gone away.
-  * `.25`: WARNING if more any frontend, backend, or individual server has gone
-    over 25% of it's maximum allowed sessions (or any queue for any server on
-    the backend is at least 25% full).
-  * `0.5`: CRITICAL for the same reasons as previous, but we've reached 50% of
-    these levels.
+* `u`: Check for servers up (`u`) or servers down (`d`), or disable all checks
+  on that particular frontend/backend (`x`).
+* `10`: WARNING if less than 10 servers are up, or if at least that many servers
+  are down.
+* `5`: CRITICAL if less than 5 servers are available, or if at least that many
+  have gone away.
+* `.25`: WARNING if more any frontend, backend, or individual server has gone
+  over 25% of it's maximum allowed sessions (or any queue for any server on the
+  backend is at least 25% full).
+* `0.5`: CRITICAL for the same reasons as previous, but we've reached 50% of
+  these levels.
 
 To override only some of these values from the pre-set defaults
 (`u,5,2,.75,.9`), simply leave the others as empty, for example: `,10,7` will
