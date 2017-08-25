@@ -775,19 +775,83 @@ set for each frontend/backend.
 
 =head1 HISTORY
 
-=begin text
+=over
 
-1.0.0rc1 - Testing Release.
-1.0.0rc2 - Fix bug in calling do_unknown().
-1.0.0    - Added support for disabling some checks with an x state.
-1.0.1    - Added prefix to response message.
-1.0.2    - Removed old constants no longer needed.
-         - Added help POD messages.
-1.0.3    - Improved error messages around check_pass.
-         - Fixed critical messaeg for sessions levels: Missing substitution in
-           the report string.
-         - Remove sanity check forcing a maximum value to be blow any threshold
-           as it seams that in some cases this is possible in HAProxy.
+=item v1.0.0rc1
+
+=over
+
+=item *
+
+Testing Release.
+
+=back
+
+=item v1.0.0rc2
+
+=over
+
+=item *
+
+Fix bug in calling do_unknown().
+
+=back
+
+=item v1.0.0
+
+=over
+
+=item *
+
+Added support for disabling some checks with an x state.
+
+=back
+
+=item v1.0.1
+
+=over
+
+=item *
+
+Added prefix to response message.
+
+=back
+
+=item v1.0.2
+
+=over
+
+=item *
+
+Removed old constants no longer needed.
+
+=item *
+
+Added help POD messages.
+
+=back
+
+=item v1.0.3
+
+=over
+
+=item *
+
+Improved error messages around check_pass.
+
+=item *
+
+Fixed critical messaeg for sessions levels: Missing substitution in the report
+string.
+
+=item *
+
+Remove sanity check forcing a maximum value to be blow any threshold as it seams
+that in some cases this is possible in HAProxy.
+
+=back
+
+=back
 
 =end text
 
