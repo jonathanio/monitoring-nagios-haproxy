@@ -57,6 +57,24 @@ To override only some of these values from the pre-set defaults
 leave checks as up, but increase the server WARN/CRIT to 10/7. or to switch to
 use down, use `d,`, or off with `x`.
 
+Each number has two meanings:
+
+* `less than 1`: Where any number is less than (but not equal to) 1, then the
+  value is understood as a percentage of the available servers or session
+  limits. If you have 20 servers and set a threshold of .25 then that would
+  mean 5 servers either up or down.
+* `greater than, or equal to 1`: Where any number is greater than, or equal
+  to, 1, then this is a fixed value. By setting 5 you are hard-coding the
+  number of servers or sessions, regardless of the limit or number available
+  to HAProxy.
+
+The code **does not** alter this limit if it is greater than the available
+servers or sessions so there are situations where the alert may not trigger.
+For example, in the event of `down` being the trigger and the number of servers
+is less than the Warning or Critical thresholds, the error may never trigger.
+It is generally better to use `up` and percentage values where you are going
+to have a flexible number of backends.
+
 ### -O, --overrides (override override ... override)
 
 Override the defaults for a particular frontend or backend, in the form
