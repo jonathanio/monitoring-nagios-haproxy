@@ -775,6 +775,8 @@ set for each frontend/backend.
 
 =head1 HISTORY
 
+=begin text
+
 1.0.0rc1 - Testing Release.
 1.0.0rc2 - Fix bug in calling do_unknown().
 1.0.0    - Added support for disabling some checks with an x state.
@@ -786,6 +788,8 @@ set for each frontend/backend.
            the report string.
          - Remove sanity check forcing a maximum value to be blow any threshold
            as it seams that in some cases this is possible in HAProxy.
+
+=end text
 
 =head1 AUTHOR
 
