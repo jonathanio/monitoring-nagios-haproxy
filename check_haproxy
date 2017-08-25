@@ -657,6 +657,8 @@ check_haproxy [--defaults (defaults)] [--overrides S<(1 2 ... n)>]
 
 =head1 OPTIONS
 
+=over
+
 =item B<-f>, B<--[no]frontends>
 
 Enable/disable checks for the frontends in HAProxy (that they're marked as OPEN
