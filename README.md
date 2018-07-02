@@ -91,6 +91,21 @@ Path to the socket `check_haproxy` should connect to (requires read/write
 permissions and must be at least user level; no operator or admin privileges
 needed).
 
+## Icinga2 configuration
+
+Copy `check_haproxy.icinga2.conf` to the icinga2 zone and define a new service for all Linux hosts with `vars.haproxy`, for example:
+
+```
+apply Service "Haproxy stats" {
+  import "generic-service"
+  check_command = "haproxy"
+  vars.haproxy_socket = "/var/run/haproxy/admin.sock"
+  vars.haproxy_default = "C<d,1,1,75,90>"
+  command_endpoint = host.vars.client_endpoint
+  assign where host.vars.client_endpoint && host.vars.os == "Linux" && host.vars.haproxy
+}
+```
+
 ## Licence
 
 This program is free software; you can redistribute it and/or
