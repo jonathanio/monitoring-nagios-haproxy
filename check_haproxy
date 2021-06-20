@@ -201,11 +201,20 @@ sub main {
     }
   }
 
-  do_success(
-    _('HAProxy is functioning within established parameters. '.
-      '(%d frontends, %d backends, %d servers, %d services)',
-        $frontends, $backends, $servers, $services)
-  );
+  if (@critical) {
+    $fullmessage = join(' ', @critical) . join(' ', @warnings);
+    _report(EXIT_CRITICAL, $fullmessage);
+  }
+  elsif (@warnings) {
+    $fullmessage = join(' ', @warnings);
+    _report(EXIT_WARNING, $fullmessage);
+  }
+  else {
+    _report(EXIT_OK, _('HAProxy is functioning within established parameters. '.
+        '(%d frontends, %d backends, %d servers, %d services)',
+          $frontends, $backends, $servers, $services)
+    );
+  }
 }
 
 sub _debug {
@@ -222,21 +231,15 @@ sub _report {
   exit $status;
 }
 
-sub do_success {
-  _report(EXIT_OK, shift);
-}
-
 sub do_warning {
   my ($message) = shift;
   push(@warning, $message);
-  _report(EXIT_WARNING, $message);
 }
 
 sub do_critical {
   my ($message, $_croak) = (shift, shift);
   croak($message) if $opt{'debug'} and $_croak;
   push(@critical, $message);
-  _report(EXIT_CRITICAL, $message);
 }
 
 sub do_unknown {
