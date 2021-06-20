@@ -142,7 +142,7 @@ our (%opt, %data, %checks);
 );
 
 # Somewhere to store messages
-our (@critical, @warning);
+our (@critical, @warning, @perfdata);
 
 sub main {
   my (@overrides);
@@ -218,7 +218,8 @@ sub _report {
   croak('No message given') unless $message;
   _debug('report', "with status ${status} and message '${message}'");
 
-  printf "HAPROXY %s: %s (%s %s)\n", (EXIT_STATUS)[$status], $message, $_program, $_version;
+  my $perfstring = join(' ', @perfdata);
+  printf "HAPROXY %s: %s | %s \n", (EXIT_STATUS)[$status], $message, $perfstring;
   exit $status;
 }
 
@@ -473,6 +474,12 @@ sub build_checks {
 
 sub check_frontends {
   _debug('check_frontends', 'is starting check on frontends');
+
+  # First gather all perfdata, the next foreach finishes on the first critical/warning.
+  foreach my $service (sort keys %data) {
+    push(@perfdata, $service . '=' . $data{$service}{'sessions'}{'current'});
+  }
+
   foreach my $service (sort keys %data) {
     next unless $data{$service}{'type'} eq TYPE_FRONTEND;
     _debug('check_frontends', _('checking FRONTEND %s', $service));
@@ -515,6 +522,12 @@ sub check_frontends {
 
 sub check_backends {
   _debug('check_backends', 'is starting check on backends');
+
+  # First gather all perfdata, the next foreach finishes on the first critical/warning.
+  foreach my $service (sort keys %data) {
+    push(@perfdata, $service . '=' . $data{$service}{'sessions'}{'current'});
+  }
+
   # Run checks for each of the backends
   foreach my $service (sort keys %data) {
     next unless $data{$service}{'type'} eq TYPE_BACKEND;
