@@ -19,7 +19,7 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 # Configure the Perl Environment
-use warnings;
+use strict;
 use Carp;
 use Switch;
 
@@ -202,11 +202,11 @@ sub main {
   }
 
   if (@critical) {
-    $fullmessage = join(' ', @critical) . join(' ', @warnings);
+    my $fullmessage = join(' ', @critical) . join(' ', @warning);
     _report(EXIT_CRITICAL, $fullmessage);
   }
-  elsif (@warnings) {
-    $fullmessage = join(' ', @warnings);
+  elsif (@warning) {
+    my $fullmessage = join(' ', @warning);
     _report(EXIT_WARNING, $fullmessage);
   }
   else {
