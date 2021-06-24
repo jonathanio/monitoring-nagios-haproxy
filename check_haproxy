@@ -202,11 +202,12 @@ sub main {
   }
 
   if (@critical) {
-    my $fullmessage = join(' ', @critical) . join(' ', @warning);
+    my $fullmessage = join(', ', @critical);
+    $fullmessage .= ' Warnings: '. join(', ', @warning) if (@warning);
     _report(EXIT_CRITICAL, $fullmessage);
   }
   elsif (@warning) {
-    my $fullmessage = join(' ', @warning);
+    my $fullmessage = join(', ', @warning);
     _report(EXIT_WARNING, $fullmessage);
   }
   else {
