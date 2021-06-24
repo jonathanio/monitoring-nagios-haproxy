@@ -242,6 +242,7 @@ sub do_critical {
   my ($message, $_croak) = (shift, shift);
   croak($message) if $opt{'debug'} and $_croak;
   push(@critical, $message);
+  return 1;
 }
 
 sub do_unknown {
@@ -504,7 +505,7 @@ sub check_frontends {
                                 ($checks{$service}{'limit_warn'}*100),
                                 ($checks{$service}{'limit_crit'}*100)));
 
-    do_critical(_('Sessions for FRONTEND %s has passed %.2f%% of Limit (%d active, %d limit)',
+    my $ret = do_critical(_('Sessions for FRONTEND %s has passed %.2f%% of Limit (%d active, %d limit)',
                   $service, ($checks{$service}{'limit_crit'}*100),
                   $data{$service}{'sessions'}{'current'},
                   $data{$service}{'sessions'}{'limit'}))
@@ -518,7 +519,7 @@ sub check_frontends {
                   $data{$service}{'sessions'}{'limit'}))
       unless check_pass('t', $checks{$service}{'limit_warn'},
                              $data{$service}{'sessions'}{'current'},
-                             $data{$service}{'sessions'}{'limit'});
+                             $data{$service}{'sessions'}{'limit'}) or $ret;
 
   }
 
@@ -559,12 +560,13 @@ sub check_backends {
       }
     }
 
-    do_critical(_($msg, $service, $checks{$service}{'be_crit'}, $up, $down, $disabled))
+    my $ret = do_critical(_($msg, $service, $checks{$service}{'be_crit'}, $up, $down, $disabled))
       unless check_pass($checks{$service}{'state'}, $checks{$service}{'be_crit'},
         ($checks{$service}{'state'} eq 'u' ? $up : ($down+$disabled)), $total);
+
     do_warning(_($msg, $service, $checks{$service}{'be_warn'}, $up, $down, $disabled))
       unless check_pass($checks{$service}{'state'}, $checks{$service}{'be_warn'},
-        ($checks{$service}{'state'} eq 'u' ? $up : ($down+$disabled)), $total);
+        ($checks{$service}{'state'} eq 'u' ? $up : ($down+$disabled)), $total) or $ret;
 
     next unless $data{$service}{'sessions'}{'limit'} > 0;
     _debug('check_frontends', 'running Sessions check');
@@ -574,7 +576,7 @@ sub check_backends {
                                ($checks{$service}{'limit_warn'}*100),
                                ($checks{$service}{'limit_crit'}*100)));
 
-    do_critical(_('Sessions for BACKEND %s has passed %d%% of Limit (%d active, %d limit)',
+    my $ret2 = do_critical(_('Sessions for BACKEND %s has passed %d%% of Limit (%d active, %d limit)',
                   $service, ($checks{$service}{'limit_crit'}*100),
                   $data{$service}{'sessions'}{'current'},
                   $data{$service}{'sessions'}{'limit'}))
@@ -588,7 +590,7 @@ sub check_backends {
                   $data{$service}{'sessions'}{'limit'}))
       unless check_pass('t', $checks{$service}{'limit_warn'},
                              $data{$service}{'sessions'}{'current'},
-                             $data{$service}{'sessions'}{'limit'});
+                             $data{$service}{'sessions'}{'limit'}) or $ret2;
 
   }
 }
