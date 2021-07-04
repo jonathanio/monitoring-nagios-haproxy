@@ -613,7 +613,7 @@ sub check_servers {
                                   ($checks{$service}{'limit_warn'}*100),
                                   ($checks{$service}{'limit_crit'}*100)));
 
-        do_critical(_('Sessions for SERVER %s on BACKEND %s has passed %d%% of Limit (%d active, %d limit)',
+        my $ret = do_critical(_('Sessions for SERVER %s on BACKEND %s has passed %d%% of Limit (%d active, %d limit)',
                       $server, $service, ($checks{$service}{'limit_crit'}*100),
                       $data{$service}{'servers'}{$server}{'sessions'}{'current'},
                       $data{$service}{'servers'}{$server}{'sessions'}{'limit'}))
@@ -627,7 +627,7 @@ sub check_servers {
                       $data{$service}{'servers'}{$server}{'sessions'}{'limit'}))
           unless check_pass('t', $checks{$service}{'limit_warn'},
                                  $data{$service}{'servers'}{$server}{'sessions'}{'current'},
-                                 $data{$service}{'servers'}{$server}{'sessions'}{'limit'});
+                                 $data{$service}{'servers'}{$server}{'sessions'}{'limit'}) or $ret;
 
       }
 
@@ -639,7 +639,7 @@ sub check_servers {
                                   ($checks{$service}{'limit_warn'}*100),
                                   ($checks{$service}{'limit_crit'}*100)));
 
-        do_critical(_('Queue for SERVER %s on BACKEND has passed %d%% of Limit (%d active, %d limit)',
+        my $ret2 = do_critical(_('Queue for SERVER %s on BACKEND has passed %d%% of Limit (%d active, %d limit)',
                       $server, $service, ($checks{$service}{'limit_crit'}*100),
                       $data{$service}{'servers'}{$server}{'queued'}{'current'},
                       $data{$service}{'servers'}{$server}{'queued'}{'limit'}))
@@ -653,7 +653,7 @@ sub check_servers {
                       $data{$service}{'servers'}{$server}{'queued'}{'limit'}))
           unless check_pass('t', $checks{$service}{'limit_warn'},
                                  $data{$service}{'servers'}{$server}{'queued'}{'current'},
-                                 $data{$service}{'servers'}{$server}{'queued'}{'limit'});
+                                 $data{$service}{'servers'}{$server}{'queued'}{'limit'}) or $ret2;
       }
     }
   }
