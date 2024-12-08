@@ -19,7 +19,7 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 # Configure the Perl Environment
-use warnings;
+use strict;
 use Carp;
 use Switch;
 
@@ -142,7 +142,7 @@ our (%opt, %data, %checks);
 );
 
 # Somewhere to store messages
-our (@critical, @warning);
+our (@critical, @warning, @perfdata);
 
 sub main {
   my (@overrides);
@@ -201,11 +201,21 @@ sub main {
     }
   }
 
-  do_success(
-    _('HAProxy is functioning within established parameters. '.
-      '(%d frontends, %d backends, %d servers, %d services)',
-        $frontends, $backends, $servers, $services)
-  );
+  if (@critical) {
+    my $fullmessage = join(', ', @critical);
+    $fullmessage .= ' Warnings: '. join(', ', @warning) if (@warning);
+    _report(EXIT_CRITICAL, $fullmessage);
+  }
+  elsif (@warning) {
+    my $fullmessage = join(', ', @warning);
+    _report(EXIT_WARNING, $fullmessage);
+  }
+  else {
+    _report(EXIT_OK, _('HAProxy is functioning within established parameters. '.
+        '(%d frontends, %d backends, %d servers, %d services)',
+          $frontends, $backends, $servers, $services)
+    );
+  }
 }
 
 sub _debug {
@@ -218,25 +228,21 @@ sub _report {
   croak('No message given') unless $message;
   _debug('report', "with status ${status} and message '${message}'");
 
-  printf "HAPROXY %s: %s (%s %s)\n", (EXIT_STATUS)[$status], $message, $_program, $_version;
+  my $perfstring = join(' ', @perfdata);
+  printf "HAPROXY %s: %s | %s \n", (EXIT_STATUS)[$status], $message, $perfstring;
   exit $status;
-}
-
-sub do_success {
-  _report(EXIT_OK, shift);
 }
 
 sub do_warning {
   my ($message) = shift;
   push(@warning, $message);
-  _report(EXIT_WARNING, $message);
 }
 
 sub do_critical {
   my ($message, $_croak) = (shift, shift);
   croak($message) if $opt{'debug'} and $_croak;
   push(@critical, $message);
-  _report(EXIT_CRITICAL, $message);
+  return 1;
 }
 
 sub do_unknown {
@@ -473,6 +479,12 @@ sub build_checks {
 
 sub check_frontends {
   _debug('check_frontends', 'is starting check on frontends');
+
+  # First gather all perfdata, the next foreach finishes on the first critical/warning.
+  foreach my $service (sort keys %data) {
+    push(@perfdata, $service . '=' . $data{$service}{'sessions'}{'current'});
+  }
+
   foreach my $service (sort keys %data) {
     next unless $data{$service}{'type'} eq TYPE_FRONTEND;
     _debug('check_frontends', _('checking FRONTEND %s', $service));
@@ -493,7 +505,7 @@ sub check_frontends {
                                 ($checks{$service}{'limit_warn'}*100),
                                 ($checks{$service}{'limit_crit'}*100)));
 
-    do_critical(_('Sessions for FRONTEND %s has passed %.2f%% of Limit (%d active, %d limit)',
+    my $ret = do_critical(_('Sessions for FRONTEND %s has passed %.2f%% of Limit (%d active, %d limit)',
                   $service, ($checks{$service}{'limit_crit'}*100),
                   $data{$service}{'sessions'}{'current'},
                   $data{$service}{'sessions'}{'limit'}))
@@ -507,7 +519,7 @@ sub check_frontends {
                   $data{$service}{'sessions'}{'limit'}))
       unless check_pass('t', $checks{$service}{'limit_warn'},
                              $data{$service}{'sessions'}{'current'},
-                             $data{$service}{'sessions'}{'limit'});
+                             $data{$service}{'sessions'}{'limit'}) or $ret;
 
   }
 
@@ -515,6 +527,12 @@ sub check_frontends {
 
 sub check_backends {
   _debug('check_backends', 'is starting check on backends');
+
+  # First gather all perfdata, the next foreach finishes on the first critical/warning.
+  foreach my $service (sort keys %data) {
+    push(@perfdata, $service . '=' . $data{$service}{'sessions'}{'current'});
+  }
+
   # Run checks for each of the backends
   foreach my $service (sort keys %data) {
     next unless $data{$service}{'type'} eq TYPE_BACKEND;
@@ -542,12 +560,13 @@ sub check_backends {
       }
     }
 
-    do_critical(_($msg, $service, $checks{$service}{'be_crit'}, $up, $down, $disabled))
+    my $ret = do_critical(_($msg, $service, $checks{$service}{'be_crit'}, $up, $down, $disabled))
       unless check_pass($checks{$service}{'state'}, $checks{$service}{'be_crit'},
         ($checks{$service}{'state'} eq 'u' ? $up : ($down+$disabled)), $total);
+
     do_warning(_($msg, $service, $checks{$service}{'be_warn'}, $up, $down, $disabled))
       unless check_pass($checks{$service}{'state'}, $checks{$service}{'be_warn'},
-        ($checks{$service}{'state'} eq 'u' ? $up : ($down+$disabled)), $total);
+        ($checks{$service}{'state'} eq 'u' ? $up : ($down+$disabled)), $total) or $ret;
 
     next unless $data{$service}{'sessions'}{'limit'} > 0;
     _debug('check_frontends', 'running Sessions check');
@@ -557,7 +576,7 @@ sub check_backends {
                                ($checks{$service}{'limit_warn'}*100),
                                ($checks{$service}{'limit_crit'}*100)));
 
-    do_critical(_('Sessions for BACKEND %s has passed %d%% of Limit (%d active, %d limit)',
+    my $ret2 = do_critical(_('Sessions for BACKEND %s has passed %d%% of Limit (%d active, %d limit)',
                   $service, ($checks{$service}{'limit_crit'}*100),
                   $data{$service}{'sessions'}{'current'},
                   $data{$service}{'sessions'}{'limit'}))
@@ -571,7 +590,7 @@ sub check_backends {
                   $data{$service}{'sessions'}{'limit'}))
       unless check_pass('t', $checks{$service}{'limit_warn'},
                              $data{$service}{'sessions'}{'current'},
-                             $data{$service}{'sessions'}{'limit'});
+                             $data{$service}{'sessions'}{'limit'}) or $ret2;
 
   }
 }
@@ -594,7 +613,7 @@ sub check_servers {
                                   ($checks{$service}{'limit_warn'}*100),
                                   ($checks{$service}{'limit_crit'}*100)));
 
-        do_critical(_('Sessions for SERVER %s on BACKEND %s has passed %d%% of Limit (%d active, %d limit)',
+        my $ret = do_critical(_('Sessions for SERVER %s on BACKEND %s has passed %d%% of Limit (%d active, %d limit)',
                       $server, $service, ($checks{$service}{'limit_crit'}*100),
                       $data{$service}{'servers'}{$server}{'sessions'}{'current'},
                       $data{$service}{'servers'}{$server}{'sessions'}{'limit'}))
@@ -608,7 +627,7 @@ sub check_servers {
                       $data{$service}{'servers'}{$server}{'sessions'}{'limit'}))
           unless check_pass('t', $checks{$service}{'limit_warn'},
                                  $data{$service}{'servers'}{$server}{'sessions'}{'current'},
-                                 $data{$service}{'servers'}{$server}{'sessions'}{'limit'});
+                                 $data{$service}{'servers'}{$server}{'sessions'}{'limit'}) or $ret;
 
       }
 
@@ -620,7 +639,7 @@ sub check_servers {
                                   ($checks{$service}{'limit_warn'}*100),
                                   ($checks{$service}{'limit_crit'}*100)));
 
-        do_critical(_('Queue for SERVER %s on BACKEND has passed %d%% of Limit (%d active, %d limit)',
+        my $ret2 = do_critical(_('Queue for SERVER %s on BACKEND has passed %d%% of Limit (%d active, %d limit)',
                       $server, $service, ($checks{$service}{'limit_crit'}*100),
                       $data{$service}{'servers'}{$server}{'queued'}{'current'},
                       $data{$service}{'servers'}{$server}{'queued'}{'limit'}))
@@ -634,7 +653,7 @@ sub check_servers {
                       $data{$service}{'servers'}{$server}{'queued'}{'limit'}))
           unless check_pass('t', $checks{$service}{'limit_warn'},
                                  $data{$service}{'servers'}{$server}{'queued'}{'current'},
-                                 $data{$service}{'servers'}{$server}{'queued'}{'limit'});
+                                 $data{$service}{'servers'}{$server}{'queued'}{'limit'}) or $ret2;
       }
     }
   }
